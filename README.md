@@ -28,7 +28,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-`.env.example` を `.env` にコピーして `OPENAI_API_KEY` を設定してください。
+`.env.example` を `.env` にコピーして `GEMINI_API_KEY` を設定してください。
 
 ### 2) 実行（安全のため dry-run 推奨）
 
@@ -89,7 +89,7 @@ PRの説明には次を入れると面接でも強いです。
 
 - [gui_agent/agent.py](gui_agent/agent.py)
 - [gui_agent/perception.py](gui_agent/perception.py)
-- [gui_agent/planner_openai.py](gui_agent/planner_openai.py)
+- [gui_agent/planner_gemini.py](gui_agent/planner_gemini.py)
 - [gui_agent/tools.py](gui_agent/tools.py)
 - [planner_api/main.py](planner_api/main.py)
 - [docker-compose.yml](docker-compose.yml)

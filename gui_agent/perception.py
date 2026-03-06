@@ -16,6 +16,11 @@ class Screenshot:
     path: Optional[Path]
     size: Tuple[int, int]
 
+    def to_png_bytes(self) -> bytes:
+        buf = io.BytesIO()
+        self.image.save(buf, format="PNG")
+        return buf.getvalue()
+
     def to_data_url(self) -> str:
         buf = io.BytesIO()
         self.image.save(buf, format="PNG")

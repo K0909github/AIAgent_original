@@ -6,7 +6,7 @@ import sys
 
 from .agent import AgentConfig, GUIAgent
 from .planner_http import HTTPPlanner
-from .planner_openai import OpenAIPlanner
+from .planner_gemini import GeminiPlanner
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -20,7 +20,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--planner",
         choices=["local", "http"],
         default="local",
-        help="local=call OpenAI directly, http=call planner API",
+        help="local=call Gemini directly, http=call planner API",
     )
     run.add_argument("--planner-url", default="http://localhost:8000", help="Base URL for http planner")
     run.add_argument(
@@ -40,10 +40,10 @@ def main(argv: list[str] | None = None) -> int:
             os.environ["GUI_AGENT_DRY_RUN"] = "1"
 
         if args.planner == "local":
-            if not os.getenv("OPENAI_API_KEY"):
-                print("OPENAI_API_KEY is not set. Copy .env.example to .env and set your key.", file=sys.stderr)
+            if not os.getenv("GEMINI_API_KEY"):
+                print("GEMINI_API_KEY is not set. Copy .env.example to .env and set your key.", file=sys.stderr)
                 return 2
-            planner = OpenAIPlanner()
+            planner = GeminiPlanner()
         else:
             planner = HTTPPlanner(args.planner_url)
 

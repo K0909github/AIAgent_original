@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
+import base64
 import os
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 
 app = FastAPI(title="gui-agent-planner", version="0.1.0")
@@ -34,7 +35,6 @@ class PlanResponse(BaseModel):
 def _tool_specs() -> list[dict[str, Any]]:
     return [
         {
-            "type": "function",
             "name": "click",
             "description": "Click at screen coordinates (x, y).",
             "parameters": {
@@ -45,7 +45,6 @@ def _tool_specs() -> list[dict[str, Any]]:
             },
         },
         {
-            "type": "function",
             "name": "type_text",
             "description": "Type text into the currently focused input.",
             "parameters": {
@@ -56,7 +55,6 @@ def _tool_specs() -> list[dict[str, Any]]:
             },
         },
         {
-            "type": "function",
             "name": "scroll",
             "description": "Scroll the mouse wheel by amount (positive=up, negative=down).",
             "parameters": {
@@ -67,7 +65,6 @@ def _tool_specs() -> list[dict[str, Any]]:
             },
         },
         {
-            "type": "function",
             "name": "wait",
             "description": "Wait for a number of seconds.",
             "parameters": {
@@ -78,7 +75,6 @@ def _tool_specs() -> list[dict[str, Any]]:
             },
         },
         {
-            "type": "function",
             "name": "done",
             "description": "Finish the task when it is complete.",
             "parameters": {
@@ -98,11 +94,11 @@ def health() -> dict[str, str]:
 
 @app.post("/plan", response_model=PlanResponse)
 def plan(req: PlanRequest) -> PlanResponse:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set")
+    if not os.getenv("GEMINI_API_KEY"):
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not set")
 
-    client = OpenAI()
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     system = (
         "You are a GUI automation planner. You must operate a computer UI by calling tools. "
@@ -118,29 +114,53 @@ def plan(req: PlanRequest) -> PlanResponse:
     if req.last_tool_result:
         user_text += f"Last result: {req.last_tool_result}\n"
 
-    resp = client.responses.create(
-        model=model,
-        instructions=system,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": user_text},
-                    {"type": "input_image", "image_url": req.image_data_url},
-                ],
-            }
-        ],
-        tools=_tool_specs(),
+    # Expect data URL: data:image/png;base64,...
+    if "," not in req.image_data_url:
+        raise HTTPException(status_code=400, detail="image_data_url must be a data URL")
+    _, b64 = req.image_data_url.split(",", 1)
+    try:
+        image_bytes = base64.b64decode(b64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid image_data_url: {e}")
+
+    tool_specs = _tool_specs()
+    tools = [types.Tool(function_declarations=tool_specs)]
+    tool_config = types.ToolConfig(
+        function_calling_config=types.FunctionCallingConfig(
+            mode="ANY",
+            allowed_function_names=[t["name"] for t in tool_specs],
+        )
     )
 
-    for item in getattr(resp, "output", []) or []:
-        if item.type == "function_call":
-            name = item.name
-            args_raw = item.arguments or "{}"
-            try:
-                args = json.loads(args_raw)
-            except Exception:
-                args = {}
-            return PlanResponse(action={"name": name, "arguments": args}, reason=f"tool_call:{name}")
+    contents = [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part(text=f"System: {system}\n" + user_text),
+                types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+            ],
+        )
+    ]
 
-    return PlanResponse(action=None, reason="no_tool_call")
+    resp = client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=types.GenerateContentConfig(tools=tools, tool_config=tool_config),
+    )
+
+    try:
+        parts = resp.candidates[0].content.parts
+    except Exception:
+        parts = []
+
+    for part in parts:
+        fc = getattr(part, "function_call", None)
+        if not fc:
+            continue
+        try:
+            args = dict(fc.args) if fc.args is not None else {}
+        except Exception:
+            args = {}
+        return PlanResponse(action={"name": fc.name, "arguments": args}, reason=f"tool_call:{fc.name}")
+
+    return PlanResponse(action=None, reason=getattr(resp, "text", None) or "no_tool_call")
