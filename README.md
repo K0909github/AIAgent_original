@@ -1,60 +1,52 @@
-# Python GUI Agent (Observe → Think → Act)
+# Dockerだけで動く Web AI Agent（Observe → Think → Act）
 
-最小構成のGUIエージェントを置いたサンプルです。
+このリポジトリは「Dockerだけで完結する」最小のAIエージェント例です。
+**コンテナ内ブラウザ（Playwright）を操作**し、画面（スクショ）をGeminiに渡して次の行動を決めます。
 
-## アーキテクチャ（面接用にそのまま言える版）
+## アーキテクチャ
 
-GUIエージェントは基本的に **Observe → Think → Act** のループです。
+エージェントは基本的に **Observe → Think → Act** のループです。
 
-- **Observe（観測）**: スクリーンショット取得（状態の取り込み）
-- **Think（計画）**: Vision LLM に画面とタスクを渡し、次の1手を tool calling で決める
-- **Act（実行）**: `click/type_text/scroll` 等のツールを実行して画面状態を変える
+- **Observe（観測）**: ブラウザのスクリーンショット取得
+- **Think（計画）**: Gemini（Vision + function calling）で「次の1手」を1回だけ決める
+- **Act（実行）**: Playwrightで `goto/click/type/press/wait` を実行
 
-このリポジトリはそれを次の4レイヤで分けています。
+このリポジトリは、最小限の3つに分けています。
 
-- `perception`: スクショ取得・画像のデータURL化
-- `planner`: LLM呼び出し（tool callingで次のアクションを1つ返す）
-- `tools/executor`: GUI操作（pyautogui）
-- `agent`: ループ制御（最大ステップ、終了条件など）
+- `web_agent`: ブラウザ操作（Observe/Act）
+- `planner_api`: Geminiに「次の1手」を問い合わせるAPI（Think）
+- `docker-compose.yml`: 2つのコンテナをつなぐ実行定義
 
-## 動かし方（ホストでGUIを操作）
+## 使い方（Dockerだけ）
 
-### 1) セットアップ
+### 1) APIキーを設定
 
-```bash
-python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+[.env.example](.env.example) を `.env` にコピーして `GEMINI_API_KEY` を入れます。
+
+任意で `.env` にタスクを入れると、コマンドが短くなります。
+
+```env
+WEB_AGENT_TASK=DuckDuckGoで '松尾研' を検索して
+WEB_AGENT_MAX_STEPS=8
+WEB_AGENT_START_URL=https://duckduckgo.com
 ```
 
-`.env.example` を `.env` にコピーして `GEMINI_API_KEY` を設定してください。
-
-### 2) 実行（安全のため dry-run 推奨）
+### 2) 実行（これだけ）
 
 ```bash
-# dry-run: 実際のクリック/入力はしない（スクショ + LLM計画だけ）
-python -m gui_agent run --task "ブラウザでGoogleを開いて '松尾研' を検索して" --max-steps 5 --dry-run
+docker compose up --build --abort-on-container-exit --exit-code-from web-agent
 ```
 
-実操作する場合は `--dry-run` を外してください（注意: マウス/キーボードを本当に操作します）。
+実行後、スクリーンショットはホスト側の `screens/` に保存されます。
 
-## Docker（Plannerだけをコンテナ化）
+注意: Google は自動操作（Playwright/headless 等）に対して CAPTCHA（"unusual traffic" / "verify you are not a robot"）を出すことがあり、その場合はエージェントが操作を継続できません。
+そのときは `WEB_AGENT_START_URL` を DuckDuckGo などに変えるのが簡単です。
 
-**重要**: コンテナは通常ホストOSのGUIを直接操作できません。
-そこでこのサンプルでは、Dockerは **Planner（LLM呼び出し）だけ**をAPIとして動かし、
-GUI操作（pyautogui）はホスト側プロセスで行う構成にしています。
-
-### 1) Planner API 起動
+補足: VS Code の Dev Containers などで **Dockerデーモンがワークスペースとは別のホスト** で動いている場合、`./screens` の bind mount がこのワークスペースに反映されず「保存されていない」ように見えることがあります。
+その場合は、コンテナから `docker cp` で回収するラッパーを使ってください。
 
 ```bash
-docker compose up --build
-```
-
-### 2) ホスト側エージェントをHTTP Plannerで実行
-
-```bash
-python -m gui_agent run --task "ブラウザでGoogleを開いて '松尾研' を検索して" --max-steps 5 --planner http --planner-url http://localhost:8000 --dry-run
+./scripts/run_docker.sh
 ```
 
 ## Git Flow（PR練習用）
@@ -79,20 +71,23 @@ git commit -m "Add xyz"
 git push -u origin feature/add-xyz
 ```
 
-PRの説明には次を入れると面接でも強いです。
+PRの説明には次を入れる
 
 - 何を作ったか（Observe/Think/Actのどこを触ったか）
 - 安全策（dry-runやステップ上限など）
-- Docker分離の理由（GUI操作はホスト、Plannerはサービス化）
+- Docker構成の理由（ブラウザ操作はweb-agent、LLM呼び出しはplanner_apiに分離）
+
+## VS Codeで開く（Dev Containers）
+
+VS CodeのDev Containers拡張を使う場合は、コマンドパレットから
+`Dev Containers: Reopen in Container` を実行します（設定は [.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)）。
 
 ## 主要ファイル
-
-- [gui_agent/agent.py](gui_agent/agent.py)
-- [gui_agent/perception.py](gui_agent/perception.py)
-- [gui_agent/planner_gemini.py](gui_agent/planner_gemini.py)
-- [gui_agent/tools.py](gui_agent/tools.py)
 - [planner_api/main.py](planner_api/main.py)
 - [docker-compose.yml](docker-compose.yml)
+- [web_agent/agent.py](web_agent/agent.py)
+- [web_agent/tools.py](web_agent/tools.py)
+- [web_agent/planner_http.py](web_agent/planner_http.py)
 
 ## 注意
 

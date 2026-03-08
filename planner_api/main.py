@@ -7,10 +7,11 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 
-app = FastAPI(title="gui-agent-planner", version="0.1.0")
+app = FastAPI(title="web-agent-planner", version="0.1.0")
 
 
 class ScreenSize(BaseModel):
@@ -35,53 +36,57 @@ class PlanResponse(BaseModel):
 def _tool_specs() -> list[dict[str, Any]]:
     return [
         {
+            "name": "goto",
+            "description": "Navigate the browser to a URL.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {"url": {"type": "STRING"}},
+                "required": ["url"],
+            },
+        },
+        {
             "name": "click",
-            "description": "Click at screen coordinates (x, y).",
+            "description": "Click an element by CSS selector.",
             "parameters": {
-                "type": "object",
-                "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-                "required": ["x", "y"],
-                "additionalProperties": False,
+                "type": "OBJECT",
+                "properties": {"selector": {"type": "STRING"}},
+                "required": ["selector"],
             },
         },
         {
-            "name": "type_text",
-            "description": "Type text into the currently focused input.",
+            "name": "type",
+            "description": "Type text into an input/textarea by CSS selector.",
             "parameters": {
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-                "additionalProperties": False,
+                "type": "OBJECT",
+                "properties": {"selector": {"type": "STRING"}, "text": {"type": "STRING"}},
+                "required": ["selector", "text"],
             },
         },
         {
-            "name": "scroll",
-            "description": "Scroll the mouse wheel by amount (positive=up, negative=down).",
+            "name": "press",
+            "description": "Press a keyboard key (e.g. Enter, Tab).",
             "parameters": {
-                "type": "object",
-                "properties": {"amount": {"type": "integer"}},
-                "required": ["amount"],
-                "additionalProperties": False,
+                "type": "OBJECT",
+                "properties": {"key": {"type": "STRING"}},
+                "required": ["key"],
             },
         },
         {
             "name": "wait",
             "description": "Wait for a number of seconds.",
             "parameters": {
-                "type": "object",
-                "properties": {"seconds": {"type": "number", "minimum": 0}},
+                "type": "OBJECT",
+                "properties": {"seconds": {"type": "NUMBER", "minimum": 0}},
                 "required": ["seconds"],
-                "additionalProperties": False,
             },
         },
         {
             "name": "done",
             "description": "Finish the task when it is complete.",
             "parameters": {
-                "type": "object",
-                "properties": {"message": {"type": ["string", "null"]}},
+                "type": "OBJECT",
+                "properties": {"message": {"type": "STRING", "nullable": True}},
                 "required": [],
-                "additionalProperties": False,
             },
         },
     ]
@@ -101,9 +106,11 @@ def plan(req: PlanRequest) -> PlanResponse:
     model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     system = (
-        "You are a GUI automation planner. You must operate a computer UI by calling tools. "
+        "You are a web browser automation planner. You must operate the page by calling tools. "
         "Decide the SINGLE next best tool call. If the task is complete, call done. "
-        "Use screen coordinates as integers."
+        "When interacting with the page, use stable CSS selectors (prefer input[name=...], button:has-text(...), etc.)."
+        " If the page is a CAPTCHA/robot check (e.g. 'unusual traffic', 'verify you are not a robot'), "
+        "you MUST call done with a short message explaining that automation cannot proceed on that page."
     )
 
     user_text = (
@@ -142,11 +149,26 @@ def plan(req: PlanRequest) -> PlanResponse:
         )
     ]
 
-    resp = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(tools=tools, tool_config=tool_config),
-    )
+    try:
+        resp = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(tools=tools, tool_config=tool_config),
+        )
+    except genai_errors.ClientError as e:
+        # Common transient/quotas: return a graceful "done" so the web-agent can exit without crashing.
+        msg = str(e)
+        if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+            return PlanResponse(
+                action={
+                    "name": "done",
+                    "arguments": {
+                        "message": "Gemini API quota/rate-limit reached. Please wait and retry later (or lower WEB_AGENT_MAX_STEPS / upgrade billing)."
+                    },
+                },
+                reason="quota_exhausted",
+            )
+        raise
 
     try:
         parts = resp.candidates[0].content.parts

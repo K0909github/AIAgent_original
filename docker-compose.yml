@@ -8,3 +8,24 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+
+  web-agent:
+    build:
+      context: ./web_agent
+      dockerfile: Dockerfile
+    depends_on:
+      - planner
+    volumes:
+      - ./screens:/app/screens
+    command:
+      - run
+      - --task
+      - ${WEB_AGENT_TASK:-DuckDuckGoで '松尾研' を検索して}
+      - --max-steps
+      - ${WEB_AGENT_MAX_STEPS:-8}
+      - --planner-url
+      - http://planner:8000
+      - --start-url
+      - ${WEB_AGENT_START_URL:-https://duckduckgo.com}
+      - --screenshot-dir
+      - /app/screens
