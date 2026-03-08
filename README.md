@@ -83,6 +83,7 @@ VS CodeのDev Containers拡張を使う場合は、コマンドパレットか�
 `Dev Containers: Reopen in Container` を実行します（設定は [.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)）。
 
 ## 主要ファイル
+- [Explain.md](Explain.md)（コード完全解説）
 - [planner_api/main.py](planner_api/main.py)
 - [docker-compose.yml](docker-compose.yml)
 - [web_agent/agent.py](web_agent/agent.py)
